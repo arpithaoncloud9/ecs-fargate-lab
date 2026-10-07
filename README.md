@@ -280,16 +280,6 @@ while true; do curl -s -m 2 http://<alb-dns-name>/ | grep -oE 'ip-172-[0-9-]*|>v
 
 ---
 
-## Next steps
-
-- [ ] CI/CD with GitHub Actions (build → push to ECR → new task definition revision → update service)
-- [ ] Rebuild the infrastructure with Terraform
-- [ ] Private subnets with VPC endpoints
-- [ ] HTTPS with ACM
-- [ ] Service auto scaling
-
----
-
 ## Cost and cleanup
 
 An ALB plus two small Fargate tasks costs roughly **$1–1.50 per day**. To pause, set the service's desired tasks to `0` (the ALB still bills while it exists). To clean up completely, delete in this order: ECS service → ALB → target group → cluster → security groups → ECR images and repository → log group.
