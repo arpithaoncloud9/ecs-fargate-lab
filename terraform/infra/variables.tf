@@ -33,3 +33,27 @@ variable "private_subnet_cidrs" {
   type        = list(string)
   default     = ["10.0.11.0/24", "10.0.12.0/24"]
 }
+
+variable "container_port" {
+  description = "Port the app listens on inside the container"
+  type        = number
+  default     = 3000
+}
+
+variable "image_tag" {
+  description = "Image tag for the initial task definition (the pipeline deploys newer ones)"
+  type        = string
+  default     = "v1"
+}
+
+variable "task_cpu" {
+  description = "Task CPU units (256 = 0.25 vCPU)"
+  type        = number
+  default     = 256
+}
+
+variable "task_memory" {
+  description = "Task memory in MiB"
+  type        = number
+  default     = 512
+}
