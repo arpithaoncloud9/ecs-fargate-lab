@@ -290,7 +290,7 @@ An ALB plus two small Fargate tasks costs roughly **$1–1.50 per day**. To paus
 
 # Production-Style ECS Fargate Infrastructure with Terraform
 
-[Architecture](docs/screenshots/terraform/ecs_terraform_architecture.png)
+![Architecture](docs/screenshots/terraform/ecs_terraform_architecture.png)
 
 This project builds a fully private, production-style ECS Fargate environment with Terraform. It replaces the manual console workflow from my earlier ECS lab with repeatable, secure infrastructure as code.
 
@@ -433,61 +433,61 @@ The ECS service starts as soon as the `v1` image is available in ECR.
 
 `terraform state list` shows every resource in the project. `[0]` and `[1]` are resources created once per Availability Zone with `count`; `["ecr_api"]`, `["ecr_dkr"]`, and `["logs"]` are the VPC endpoints created with `for_each`.
 
-[terraform state list](docs/screenshots/terraform/01_terraform_state_list.png)
+![terraform state list](docs/screenshots/terraform/01_terraform_state_list.png)
 
 ### 02 — Custom VPC with public and private subnets
 
 `myapp-vpc` (`10.0.0.0/16`) with 4 subnets across two AZs: public `10.0.1.0/24` and `10.0.2.0/24`, private `10.0.11.0/24` and `10.0.12.0/24`. Public subnets route to the internet gateway; private subnets have **no internet route**. The third route table, with no subnet associations, is the VPC's default main route table, which AWS creates automatically; it's unused.
 
-[VPC resource map](docs/screenshots/terraform/02_vpc_resource_map.png)
+![VPC resource map](docs/screenshots/terraform/02_vpc_resource_map.png)
 
 ### 03 — VPC endpoints instead of a NAT gateway
 
 Four endpoints, all **Available**: `ecr.api` (login), `ecr.dkr` (image manifests), and `logs` (CloudWatch) as interface endpoints, plus S3 (image layers) as a free gateway endpoint.
 
-[VPC endpoints](docs/screenshots/terraform/03_vpc_endpoints.png)
+![VPC endpoints](docs/screenshots/terraform/03_vpc_endpoints.png)
 
 ### 04 — Private ECR repository
 
 Repository `myapp` with **immutable tags**, scan on push, and AES-256 encryption.
 
-[ECR repository](docs/screenshots/terraform/04_ecr_repository.png)
+![ECR repository](docs/screenshots/terraform/04_ecr_repository.png)
 
 ### 05 — Internet-facing Application Load Balancer
 
 `myapp-alb` is **Active** in the custom VPC, spanning the public subnets in **us-east-1a** and **us-east-1b**. Its DNS name is the single public address for the app.
 
-[Application Load Balancer](docs/screenshots/terraform/05_alb.png)
+![Application Load Balancer](docs/screenshots/terraform/05_alb.png)
 
 ### 06 — Target group: both tasks healthy
 
 `myapp-tg` routes HTTP traffic to port 3000 on IP targets. Both tasks, **10.0.11.135** (us-east-1a) and **10.0.12.251** (us-east-1b), pass the `/health` check. ECS registered them automatically.
 
-[Target group healthy](docs/screenshots/terraform/06_target_group_healthy.png)
+![Target group healthy](docs/screenshots/terraform/06_target_group_healthy.png)
 
 ### 07 — ECS service running
 
 Service `myapp-web` in `myapp-cluster` is **Active** with **2 desired, 2 running**, deployment status **Success**, on task definition `myapp:4`. (Revision numbers never reset in a task definition family; revisions 1–3 were created during the earlier console lab.)
 
-[ECS service running](docs/screenshots/terraform/07_ecs_service_running.png)
+![ECS service running](docs/screenshots/terraform/07_ecs_service_running.png)
 
 ### 08 — Tasks have no public IP
 
 Both tasks have **private IPs only** (`10.0.11.135`, `10.0.12.251`). They can't be reached from the internet; all traffic arrives through the ALB.
 
-[Tasks with private IPs only](docs/screenshots/terraform/08_tasks_private_ip.png)
+![Tasks with private IPs only](docs/screenshots/terraform/08_tasks_private_ip.png)
 
 ### 09 — App through the ALB
 
 The same ALB address serves the page from two different tasks: `ip-10-0-11-135` in us-east-1a and `ip-10-0-12-251` in us-east-1b.
 
-[App through the ALB](docs/screenshots/terraform/09_alb_browser.png)
+![App through the ALB](docs/screenshots/terraform/09_alb_browser.png)
 
 ### 10 — CloudWatch logs
 
 Log group `/ecs/myapp` has one log stream per task (`ecs/myapp/<task-id>`). Logs reach CloudWatch through the **logs VPC endpoint**, since the tasks have no internet access.
 
-[CloudWatch logs](docs/screenshots/terraform/10_cloudwatch_logs.png)
+![CloudWatch logs](docs/screenshots/terraform/10_cloudwatch_logs.png)
 
 ---
 
