@@ -1,4 +1,4 @@
-# Zero-Downtime Container Deployments on AWS ECS Fargate
+# Zero-Downtime Container Deployments on AWS ECS Fargate (Manual - Console work)
 
 A hands-on project where I containerized a Node.js web app, stored the image in Amazon ECR, and ran it on Amazon ECS Fargate behind an Application Load Balancer across two Availability Zones. I then tested real operational scenarios: self-healing, zero-downtime rolling updates, automatic rollback with the deployment circuit breaker, and manual rollback.
 
@@ -288,7 +288,7 @@ An ALB plus two small Fargate tasks costs roughly **$1–1.50 per day**. To paus
 ---
 
 
-# Production-Style ECS Fargate Infrastructure with Terraform
+# Production-Style ECS Fargate Infrastructure with Terraform (Automation - IaC)
 
 ![Architecture](docs/screenshots/terraform/ecs_terraform_architecture.png)
 
