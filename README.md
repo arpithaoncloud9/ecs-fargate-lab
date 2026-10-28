@@ -285,6 +285,235 @@ while true; do curl -s -m 2 http://<alb-dns-name>/ | grep -oE 'ip-172-[0-9-]*|>v
 An ALB plus two small Fargate tasks costs roughly **$1–1.50 per day**. To pause, set the service's desired tasks to `0` (the ALB still bills while it exists). To clean up completely, delete in this order: ECS service → ALB → target group → cluster → security groups → ECR images and repository → log group.
 
 ---
+---
+
+
+# Production-Style ECS Fargate Infrastructure with Terraform
+
+[Architecture](docs/screenshots/terraform/ecs_terraform_architecture.png)
+
+This project builds a fully private, production-style ECS Fargate environment with Terraform. It replaces the manual console workflow from my earlier ECS lab with repeatable, secure infrastructure as code.
+
+The whole stack (VPC, subnets, VPC endpoints, security groups, ECR, IAM, ECS cluster, task definition, service, and Application Load Balancer) is defined in code: **30 AWS resources**, created with `terraform apply` and removed with `terraform destroy`.
+
+---
+
+## Highlights
+
+|Feature|Description|
+|---|---|
+|**Fully private compute**|Fargate tasks run in private subnets with **no public IPs**|
+|**No NAT gateway**|Image pulls and logs go through **VPC endpoints** for ECR API, ECR Docker, S3, and CloudWatch Logs; tasks have no internet access at all|
+|**Least-privilege networking**|Security group chaining: tasks accept port 3000 **only** from the ALB's security group|
+|**Protected container registry**|ECR with **immutable tags**, scan on push, and a lifecycle policy|
+|**High availability**|Two tasks across two Availability Zones behind one ALB DNS name|
+|**Safe deployments (configured)**|Rolling updates (100% min / 200% max) with the deployment circuit breaker and automatic rollback|
+|**Remote Terraform state**|S3 backend with S3-native locking, ready for CI/CD|
+
+---
+
+## Architecture
+
+```
+                    ┌──────────────────── Custom VPC 10.0.0.0/16 ─────────────────────┐
+Users ──http:80──▶  │  PUBLIC SUBNETS (us-east-1a, us-east-1b)                         │
+                    │     ALB (alb-sg: 80 from internet) ◀── internet gateway          │
+                    │        │  listener :80 → target group (/health)                  │
+                    │        ▼                                                         │
+                    │  PRIVATE SUBNETS (us-east-1a, us-east-1b)                        │
+                    │     Fargate task (10.0.11.x)   Fargate task (10.0.12.x)          │
+                    │     task-sg: 3000 only from alb-sg · no public IP · no internet  │
+                    │        │                                                         │
+                    │     VPC endpoints: ecr.api · ecr.dkr · logs (interface)          │
+                    │                    s3 (gateway, free)                            │
+                    └────────┼─────────────────────────────────────────────────────────┘
+                             ▼
+                  ECR (image) · S3 (image layers) · CloudWatch Logs
+
+Terraform state ──▶ S3 bucket (versioned, encrypted, locked)
+```
+
+**How a request flows:** the browser reaches the ALB in the public subnets on port 80. The listener forwards to the target group, which only routes to tasks passing the `/health` check. Tasks accept traffic only from the ALB's security group.
+
+**How a task starts without internet access:** the execution role gets an ECR token through the `ecr.api` endpoint, reads the image manifest through `ecr.dkr`, downloads layers from S3 through the gateway endpoint, and sends logs through the `logs` endpoint. With private DNS enabled, the normal AWS hostnames resolve to these private endpoints, so ECS needs no special configuration.
+
+---
+
+## Design decisions
+
+|Decision|Choice|Reason|
+|---|---|---|
+|Outbound access for private tasks|**VPC endpoints instead of a NAT gateway**|No internet path at all, and AWS traffic stays on the AWS network. Trade-off: the app can't call external APIs without adding a NAT gateway later|
+|Terraform state|Existing S3 state bucket, with a **project-specific key** (`ecs-fargate-lab/infra/terraform.tfstate`)|One protected state bucket per account, separate keys per project|
+|State locking|`use_lockfile = true`|S3-native locking (Terraform 1.10+), no DynamoDB table needed|
+|Image tags|**Immutable**|A released version can never be overwritten, so every deployment traces back to an exact build|
+|App version ownership|`ignore_changes = [task_definition]` on the service|Terraform owns the infrastructure; the upcoming CI/CD pipeline will own which app version runs|
+
+---
+
+## Resources created (30)
+
+|Area|Resources|
+|---|---|
+|Network (12)|VPC, internet gateway, 2 public subnets, 2 private subnets, 2 route tables, 4 route table associations|
+|VPC endpoints (5)|Endpoint security group, `ecr.api`, `ecr.dkr`, `logs` interface endpoints, S3 gateway endpoint|
+|Security and registry (4)|ALB security group, task security group, ECR repository, ECR lifecycle policy|
+|ECS foundation (5)|Task execution role, policy attachment, CloudWatch log group, ECS cluster, task definition|
+|Traffic and service (4)|Application Load Balancer, target group, HTTP listener, ECS service|
+
+---
+
+## Repository structure
+
+```
+ecs-fargate-lab/
+├── docs/
+│   ├── architecture.png               # Architecture from the manual ECS lab
+│   └── screenshots/
+│       ├── day1/ ... day4/            # Manual ECS lab screenshots
+│       └── terraform/                 # Screenshots for this Terraform build
+│
+├── terraform/
+│   ├── .gitignore                     # Ignores .terraform/, *.tfstate, *.tfvars
+│   └── infra/
+│       ├── .terraform.lock.hcl        # Provider version lock (committed)
+│       ├── versions.tf                # Terraform and AWS provider versions
+│       ├── backend.tf                 # S3 remote state with locking
+│       ├── providers.tf               # AWS provider, region, default tags
+│       ├── variables.tf               # Region, names, CIDRs, port, task size, desired count
+│       ├── network.tf                 # VPC, internet gateway, subnets, route tables
+│       ├── endpoints.tf               # VPC endpoints and their security group
+│       ├── security.tf                # ALB and task security groups
+│       ├── ecr.tf                     # ECR repository and lifecycle policy
+│       ├── iam.tf                     # ECS task execution role
+│       ├── ecs.tf                     # Log group, cluster, task definition, service
+│       ├── alb.tf                     # Load balancer, target group, listener
+│       └── outputs.tf                 # VPC/subnet/SG IDs, ECR URL, cluster, app URL
+│
+├── Dockerfile                         # Node.js 22 Alpine, non-root user
+├── server.js                          # Web page, /health endpoint, graceful shutdown
+├── package.json
+├── .dockerignore
+├── .gitignore
+├── LICENSE
+└── README.md
+```
+
+---
+
+## How to deploy
+
+**Prerequisites:** Terraform 1.10+, AWS CLI with credentials, Docker, and an existing S3 bucket for state (set its name in `backend.tf`).
+
+```bash
+# 1. Create the infrastructure
+cd terraform/infra
+terraform init
+terraform plan
+terraform apply
+
+# 2. Push the first image (one time; CI/CD will handle later images)
+cd ../..
+ECR=$(terraform -chdir=terraform/infra output -raw ecr_repository_url)
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${ECR%/*}
+docker build --platform linux/amd64 --provenance=false -t $ECR:v1 .
+docker push $ECR:v1
+
+# 3. Open the app
+open $(terraform -chdir=terraform/infra output -raw app_url)
+```
+
+The ECS service starts as soon as the `v1` image is available in ECR.
+
+---
+
+## Screenshots
+
+### 01 — All 30 resources managed by Terraform
+
+`terraform state list` shows every resource in the project. `[0]` and `[1]` are resources created once per Availability Zone with `count`; `["ecr_api"]`, `["ecr_dkr"]`, and `["logs"]` are the VPC endpoints created with `for_each`.
+
+[terraform state list](docs/screenshots/terraform/01_terraform_state_list.png)
+
+### 02 — Custom VPC with public and private subnets
+
+`myapp-vpc` (`10.0.0.0/16`) with 4 subnets across two AZs: public `10.0.1.0/24` and `10.0.2.0/24`, private `10.0.11.0/24` and `10.0.12.0/24`. Public subnets route to the internet gateway; private subnets have **no internet route**. The third route table, with no subnet associations, is the VPC's default main route table, which AWS creates automatically; it's unused.
+
+[VPC resource map](docs/screenshots/terraform/02_vpc_resource_map.png)
+
+### 03 — VPC endpoints instead of a NAT gateway
+
+Four endpoints, all **Available**: `ecr.api` (login), `ecr.dkr` (image manifests), and `logs` (CloudWatch) as interface endpoints, plus S3 (image layers) as a free gateway endpoint.
+
+[VPC endpoints](docs/screenshots/terraform/03_vpc_endpoints.png)
+
+### 04 — Private ECR repository
+
+Repository `myapp` with **immutable tags**, scan on push, and AES-256 encryption.
+
+[ECR repository](docs/screenshots/terraform/04_ecr_repository.png)
+
+### 05 — Internet-facing Application Load Balancer
+
+`myapp-alb` is **Active** in the custom VPC, spanning the public subnets in **us-east-1a** and **us-east-1b**. Its DNS name is the single public address for the app.
+
+[Application Load Balancer](docs/screenshots/terraform/05_alb.png)
+
+### 06 — Target group: both tasks healthy
+
+`myapp-tg` routes HTTP traffic to port 3000 on IP targets. Both tasks, **10.0.11.135** (us-east-1a) and **10.0.12.251** (us-east-1b), pass the `/health` check. ECS registered them automatically.
+
+[Target group healthy](docs/screenshots/terraform/06_target_group_healthy.png)
+
+### 07 — ECS service running
+
+Service `myapp-web` in `myapp-cluster` is **Active** with **2 desired, 2 running**, deployment status **Success**, on task definition `myapp:4`. (Revision numbers never reset in a task definition family; revisions 1–3 were created during the earlier console lab.)
+
+[ECS service running](docs/screenshots/terraform/07_ecs_service_running.png)
+
+### 08 — Tasks have no public IP
+
+Both tasks have **private IPs only** (`10.0.11.135`, `10.0.12.251`). They can't be reached from the internet; all traffic arrives through the ALB.
+
+[Tasks with private IPs only](docs/screenshots/terraform/08_tasks_private_ip.png)
+
+### 09 — App through the ALB
+
+The same ALB address serves the page from two different tasks: `ip-10-0-11-135` in us-east-1a and `ip-10-0-12-251` in us-east-1b.
+
+[App through the ALB](docs/screenshots/terraform/09_alb_browser.png)
+
+### 10 — CloudWatch logs
+
+Log group `/ecs/myapp` has one log stream per task (`ecs/myapp/<task-id>`). Logs reach CloudWatch through the **logs VPC endpoint**, since the tasks have no internet access.
+
+[CloudWatch logs](docs/screenshots/terraform/10_cloudwatch_logs.png)
+
+---
+
+## Cost and cleanup
+
+While running, this setup costs roughly **$2.50 per day** (3 interface endpoints, the ALB, and 2 small Fargate tasks). To remove everything:
+
+```bash
+cd terraform/infra
+terraform destroy
+```
+
+The ECR repository uses `force_delete`, so it's removed along with its images. The state bucket isn't managed by this project, so it remains.
+
+---
+
+## What I learned
+
+- Building infrastructure in **layers** (network → security → ECS → load balancing), with small, reviewable plans.
+- **Remote state** design: one state bucket per account, separate keys per project, and S3-native locking.
+- Running Fargate in **private subnets without NAT**: the four endpoints a task needs, and why VPC DNS settings matter.
+- **NAT gateway vs VPC endpoints vs public IPs**: cost, security, and when each fits.
+- Terraform features: `count`, `for_each`, `[*]`, `jsonencode`, `depends_on`, `lifecycle`, outputs, and default tags.
+- Splitting ownership: Terraform for infrastructure, CI/CD for application versions.
+
+---
 
 ## Author
 
